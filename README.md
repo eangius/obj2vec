@@ -68,17 +68,17 @@ my_skipgrams = [(
 ### Using Embeddings
 You can load existing embeddings into your application as follows: 
 ```python
-from obj2vec.models.obj2vec import *
+from embeddings.obj2vec import *
 
-model = Obj2Vec(filename=f'data/embedding_glove.6B.300d.tsv.zip')
+model = Obj2Vec(filename=f'data/embedding_glove.6B.80d-filtered.tsv.zip')
 model.objectify(
     model.vectorize('king') -
     model.vectorize('man') +
     model.vectorize('woman')
 ) == 'queen'
 ```
-The `glov.6B.300d.tsv.zip` here is a public google pre-trained embedding on a 
-huge corpus of data. You can use [others](https://nlp.stanford.edu/projects/glove/)
+The `glov.6B.80d-filtered.tsv.zip` here is a pruned version of a public google
+pre-trained embedding on a huge corpus of data. You can use [others](https://nlp.stanford.edu/projects/glove/)
 or even load your own vectors too! The library lets you convert objects to/from
 vectors & gives you handy ways to operate with them by reference. In this case
 to find concept associations via arithmetic!
@@ -91,7 +91,7 @@ feed them to downstream machine learning tasks.
 ### Building New Embeddings
 To build embeddings with your own data from scratch you can run:
 ```python
-from obj2vec.models.obj2vec import *
+from embeddings.obj2vec import *
 
 model = Obj2Vec(vocabulary=my_objects)
 model.build(embed_dim=10)               # hyper param
@@ -108,7 +108,7 @@ tune resulting vectors to your specific data & computing resources.
 ### Customizing Existing Embeddings
 You can also improve & customize existing embeddings like so:
 ```python
-from obj2vec.models.obj2vec import *
+from embeddings.obj2vec import *
 
 model = Obj2Vec(filename=f'data/embedding_glove.6B.300d.tsv.zip')
 model.compact(vocabulary=my_objects)                      # optional
