@@ -112,7 +112,7 @@ You can also improve & customize existing embeddings like so:
 ```python
 from embeddings.obj2vec import *
 
-model = Obj2Vec(filename=f'data/embedding_glove.6B.300d.tsv.zip')
+model = Obj2Vec(filename=f'data/embedding_glove.6B.80d-filtered.tsv.zip')
 model.compact(vocabulary=my_objects)                      # optional
 model.build(embed_dim=10)                                 # hyper param
 model.learn(my_skipgrams, epochs=5)                       # hyper param
