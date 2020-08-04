@@ -1,5 +1,5 @@
 # Object-2-Vector
-General purpose utility to machine-learn distributed semantic vector spaces from arbitrary objects.
+This is a general purpose utility to machine-learn distributed semantic vector spaces from arbitrary objects.
 Key features include:
 
 * Decouples domain contexts from embedding generation & query mechanics.
@@ -8,14 +8,16 @@ Key features include:
 * Efficiently find synonyms, antonyms or irrelevant objects.
 * Allows for vector arithmetic to find associations between objects.
 
-------------------
-### Contextualizing Objects
+<img src="https://user-images.githubusercontent.com/50584378/89343356-2561be80-d672-11ea-8144-58c5484509ba.png"
+     alt="glove embedding" width="50%" height="80%">
+
+## Contextualizing Objects
 The key to building good embeddings is to identify relevant objects & extract
 meaningful context from the data set which varies from domain to domain. To use
 this library callers must generate an object `vocabulary` as well as `skipgram`
 contexts explained below.
 
-#### Object Vocabulary
+### Object Vocabulary
 An object to this library is anything that can satisfy the following properties:
 ```text
 [1] Objects are identifiable via a unique string.
@@ -45,7 +47,7 @@ my_corpus = ['the cat jumped over the moon']
 my_vocabulary = ['<???>', 'the', 'cat', 'jumped', 'over', 'moon', ...]
 ```
 
-#### Building Skip-Grams
+### Building Skip-Grams
 To learn embeddings, the library needs data formatted into a list of skip grams
 of the form `([(target, context)], labels)` where `labels` is an array of numerical
 flag indicating whether each of the `target` objects belongs with the corresponding
@@ -64,8 +66,8 @@ my_skipgrams = [(
     [0, 1, 0, ..., 0, 0, 1]
 )]
 ```
-------------------
-### Using Embeddings
+
+## Using Embeddings
 You can load existing embeddings into your application as follows: 
 ```python
 from embeddings.obj2vec import *
@@ -87,8 +89,8 @@ Take a look also at the `.rank()` & `.similarity()` methods for other ways to
 explore these vector spaces. A common use-case is to `.vectorize()` objects &
 feed them to downstream machine learning tasks.
 
-------------------
-### Building New Embeddings
+
+## Building New Embeddings
 To build embeddings with your own data from scratch you can run:
 ```python
 from embeddings.obj2vec import *
@@ -104,8 +106,8 @@ This is a one time machine learned task that is usually done offline. There are
 several other hyper parameters in the `.build()` & `.learn()` methods to fine
 tune resulting vectors to your specific data & computing resources.
 
-------------------
-### Customizing Existing Embeddings
+
+## Customizing Existing Embeddings
 You can also improve & customize existing embeddings like so:
 ```python
 from embeddings.obj2vec import *
