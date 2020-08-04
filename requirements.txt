@@ -1,0 +1,8 @@
+# Alphabetical list of 3rd party libraries.
+numpy
+keras
+pandas
+pytest
+pytest-cov
+tensorflow
+scikit-learn
