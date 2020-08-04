@@ -1,0 +1,9 @@
+# Cached state
+/**/__pycache__
+/**/.pytest_cache
+/venv
+.venv
+.coverage
+
+# Code diffs
+*.diff
