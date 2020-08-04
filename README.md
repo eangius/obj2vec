@@ -64,14 +64,6 @@ my_skipgrams = [(
     [0, 1, 0, ..., 0, 0, 1]
 )]
 ```
-Note that the library 
--- must be list of objects
-   library will apply the hashing trick behind the scenes
-   
- 
-
-
-
 ------------------
 ### Using Embeddings
 You can load existing embeddings into your application as follows: 
