@@ -70,7 +70,7 @@ my_skipgrams = [(
 ## Using Embeddings
 You can load existing embeddings into your application as follows: 
 ```python
-from embeddings.obj2vec import *
+from obj2vec.embeddings import *
 
 model = Obj2Vec(filename=f'data/embedding_glove.6B.80d-filtered.tsv.zip')
 model.objectify(
@@ -93,7 +93,7 @@ feed them to downstream machine learning tasks.
 ## Building New Embeddings
 To build embeddings with your own data from scratch you can run:
 ```python
-from embeddings.obj2vec import *
+from obj2vec.embeddings import *
 
 model = Obj2Vec(vocabulary=my_objects)
 model.build(embed_dim=10)               # hyper param
@@ -110,7 +110,7 @@ tune resulting vectors to your specific data & computing resources.
 ## Customizing Existing Embeddings
 You can also improve & customize existing embeddings like so:
 ```python
-from embeddings.obj2vec import *
+from obj2vec.embeddings import *
 
 model = Obj2Vec(filename=f'data/embedding_glove.6B.80d-filtered.tsv.zip')
 model.compact(vocabulary=my_objects)                      # optional
