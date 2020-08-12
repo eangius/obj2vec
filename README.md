@@ -128,3 +128,8 @@ speed up training & remove noise at search time.
 You can also combine multiple embeddings into one via the `.append()` method.
 Provided all embeddings are different & have the same set of objects, this
 technique allows you to enrich objects with different forms of semantics.
+
+## Running Tests
+```python
+python3 -m pytest -vv -p no:cacheprovider tests/obj2vec.py;
+```

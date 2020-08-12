@@ -15,6 +15,8 @@ from tensorflow.keras.layers import dot, Dense, Embedding, Input, Reshape
 from tensorflow.keras.metrics import Precision, Recall
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import SGD
+from tensorflow.python.util import deprecation
+deprecation._PRINT_DEPRECATION_WARNINGS = False
 
 
 class Obj2Vec:
@@ -179,7 +181,7 @@ class Obj2Vec:
     # & may affect embedding quality.
     #
     # @return vocabulary    optional subset of objects to keep.
-    # @return dim_variance  optional fraction of dimension signal to keep.
+    # @return dim_variance  optional fraction or number of dimension signal to keep.
     # @return self
     def compact(self, vocabulary: list = None, dim_variance: float = None):
         if bool(vocabulary):
@@ -189,7 +191,8 @@ class Obj2Vec:
             )
 
         if bool(dim_variance):
-            require(0 < dim_variance <= 1, "fraction of signal to keep")
+            require(dim_variance > 0,
+                    "positive fraction or number of dimensions to reduce to")
             self.embedding = self._update_embedding(
                 PCA(n_components=dim_variance).fit_transform(self.embedding)
             )
@@ -293,7 +296,7 @@ class Obj2Vec:
             result,
             reverse=True,
             key=lambda obj_other: self.similarity(obj, obj_other)
-        )
+        )[:n]
 
     # PRIVATE METHODS #
 
