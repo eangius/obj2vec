@@ -48,23 +48,27 @@ my_vocabulary = ['<???>', 'the', 'cat', 'jumped', 'over', 'moon', ...]
 ```
 
 ### Building Skip-Grams
-To learn embeddings, the library needs data formatted into a list of skip grams
-of the form `([(target, context)], labels)` where `labels` is an array of numerical
-flag indicating whether each of the `target` objects belongs with the corresponding
-`context` object or not.
+To learn embeddings, the library takes a list of skip-gram triples of the form
+`(target, context, label)` where `labels` is a numeric flag indicating whether
+the `target` belongs within the corresponding `context` object or not. 
 
-How to extract `target`/`context` pairs really depends on your domain. This
-essentially involves sampling & filtering both co-occurring & never occurring
+How to extract these `target`/`context` object pairs really depends on your domain.
+This essentially involves sampling & filtering both co-occurring & never occurring
 objects from your data set. In many cases, the positive/negative `labels` can be
 automatically derived in an unsupervised manner with a sliding/convolution window.
 
 For example, embedding the classical word2vec model on `my_corpus` with a sliding
 window of 1 would produce these skip grams to train the model.
 ```python
-my_skipgrams = [(
-    [['jumped', 'the'], ['jumped', 'cat'], ['over', 'jumped'], ..., ['the', '<???>'], ['moon', 'over'], ['the', 'over']],
-    [0, 1, 0, ..., 0, 0, 1]
-)]
+my_skipgrams = [
+    ('jumped', 'the', 0),
+    ('jumped', 'cat', 1),
+    ('over', 'jumped', 0),
+    # ... #
+    ('the', '<???>', 0),
+    ('moon', 'over', 0),
+    ('the', 'over', 1)
+]
 ```
 
 ## Using Embeddings

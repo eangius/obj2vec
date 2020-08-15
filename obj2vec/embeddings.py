@@ -181,7 +181,7 @@ class Obj2Vec:
     # & may affect embedding quality.
     #
     # @return vocabulary    optional subset of objects to keep.
-    # @return dim_variance  optional fraction or number of dimension signal to keep.
+    # @return dim_variance  optional fraction or number of dimensions to keep.
     # @return self
     def compact(self, vocabulary: list = None, dim_variance: float = None):
         if bool(vocabulary):
@@ -333,15 +333,15 @@ class Obj2Vec:
             name='skip_gram_negative_sample'
         )
 
-    # Splits skip-grams into array of its parts. Reverse maps objects
+    # Splits skip-grams into array of its tuple parts. Reverse maps objects
     # to embedding's vocabulary indices filtering any unknown gram.
     def _parse_skipgrams(self, skip_grams: list) -> (list, list, list):
-        targets, contexts, labels = [], [], []
-        for i, (pairs, lbls) in enumerate(skip_grams):
-            terms = list(zip(*pairs))
-            targets.extend(self._index_of(obj) for obj in terms[0])
-            contexts.extend(self._index_of(obj) for obj in terms[1])
-            labels.extend(lbls)
+        targets, contexts, labels = zip(*skip_grams)
+        targets = list(targets)
+        contexts = list(contexts)
+        for i in range(len(skip_grams)):
+            targets[i] = self._index_of(targets[i])
+            contexts[i] = self._index_of(contexts[i])
         return targets, contexts, labels
 
     # Dataframe mask matching to row of values.
