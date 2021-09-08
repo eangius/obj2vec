@@ -1,14 +1,17 @@
-# Third party libraries
+#!usr/bin/env python
+
+# External libraries
 import csv
 import hashlib
 import numpy as np
 import os
 import pandas as pd
 import random
-
+from cachetools import LRUCache, cached
+from collections import defaultdict
+from typing import Tuple
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
-
 from tensorflow.keras.activations import sigmoid
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from tensorflow.keras.layers import dot, Dense, Embedding, Input, Reshape
@@ -24,8 +27,7 @@ class Obj2Vec:
     # CONSTRUCTION METHODS #
 
     # Instantiate an object-to-vector model either for training or usage.
-    #
-    # @param filename:   optional path to pre-trained embedding *.tsv.zip file.
+    # @param filename:   optional path to pre-trained embedding *.tsv.xz file.
     # @param vocabulary: optional list of object keys that must:
     #                    -- uniquely encode distinct objects.
     #                    -- index[0] encode the unknown object.
@@ -33,36 +35,48 @@ class Obj2Vec:
         require(bool(vocabulary) != bool(filename),
                 "need a vocabulary or pre-trained embedding")
 
-        if bool(filename):
+        if filename:
+            # TODO: handle loading very large embeddings.
             require(os.path.exists(filename), "Embedding file not found")
+
+            col_schema = defaultdict(lambda: self.resolution)
+            col_schema[0] = 'str'
+
             self.embedding = pd.read_csv(
                 filename,
                 sep='\t',
-                compression='gzip',
-                index_col=[self.index_col],
-                na_filter=False,
+                compression=self.compression_format,
+                header=None,
+                index_col=[0],
+                na_filter=False,        # else corruption
+                dtype=col_schema,       # faster loading
                 quoting=csv.QUOTE_NONE,
             )
+            self.embedding.rename(
+                columns={c: c - 1 for c in self.embedding.columns},  # zero col start
+                inplace=True,
+            )
 
-        if bool(vocabulary):
+        if vocabulary:
             require(
                 len(vocabulary) == len(set(vocabulary)),
                 "vocabulary cannot have duplicates"
             )
             self.embedding = pd.DataFrame(
                 vocabulary,
-                columns=[self.index_col],
+                columns=[0],
                 dtype=str
-            ).set_index(self.index_col)
+            ).set_index(0)
 
+        self.embedding.index.rename(name=self.index_col, inplace=True)
         self.architecture = None
         self.history = None
+        return
 
     # Compiles a skip-gram with negative-sampling architecture. This arch trains
     # separate embeddings for target & context objects that get compared by
     # their cosine similarity to internally classify if targets are within or
     # outside context window. Only target embedding is kept as vectors.
-    #
     # @param embed_dim:  optional number of "concepts" to capture.
     # @param learn_rate: fidelity of learning vs speed.
     # @return self
@@ -70,15 +84,10 @@ class Obj2Vec:
         require(learn_rate > 0, "positive learn rate needed")
 
         dim = self._dimensionality()
-        if not embed_dim:
-            embed_dim = dim
-
-        require(embed_dim > 0, "positive dimension needed")
+        embed_dim = embed_dim or dim
 
         if embed_dim < dim:
-            self.embedding = self._update_embedding(
-                PCA(n_components=embed_dim).fit_transform(self.embedding)
-            )
+            self.compact(embed_dim=embed_dim)
 
         self.architecture = self._build_sgns(
             vocab_size=self.embedding.shape[0],
@@ -98,16 +107,14 @@ class Obj2Vec:
     # Trains or continue training the architecture with specific skip-gram data.
     # Formulation of skip-gram data depends on model use-case but should be a
     # list of tuples: 1st item are lists of target/context object keys (not
-    # not indices) & 2nd item is list of labels. Unrecognized objects in are
+    # not indices) & 2nd item is list of labels. Unrecognized objects are
     # kept as unknown vocabulary values.
-    #
     # @param skip_grams: data set to learn from.
     # @param epochs:     number of re-iterations of data.
     # @param eval_data:  fraction of data to use for evaluation.
     # @param batch_size: chunk of examples to process while learning.
     # @return self
-    def learn(self, skip_grams: list, epochs: int = 1, eval_data: float = 0.0,
-              batch_size: int = 128):
+    def learn(self, skip_grams: list, epochs: int = 1, eval_data: float = 0.0, batch_size: int = 128):
         require(len(skip_grams) > 0, "non-empty skip-gram data needed to learn")
         require(epochs > 0, "positive epochs needed")
         require(0 <= eval_data <= 1, "evaluation data fraction is out of range")
@@ -127,10 +134,10 @@ class Obj2Vec:
             shuffle=True,
             callbacks=[
                 ModelCheckpoint(
-                    filepath='model.h5',
+                    filepath=self.checkpoint_file,
                 ),
                 EarlyStopping(
-                    monitor='val_loss',
+                    monitor='loss',
                     patience=2
                 )
             ],
@@ -142,7 +149,6 @@ class Obj2Vec:
         return self
 
     # Evaluates model for production purposes.
-    #
     # @param skip_grams: data set to learn from.
     # @return quality:   keras quality object.
     def evaluate(self, skip_grams: list):
@@ -160,7 +166,6 @@ class Obj2Vec:
 
     # Concatenates another trained embedding with the same vocabulary onto
     # this one. Useful to enrich vectors with different forms of context.
-    #
     # @param other: other object-to-vector
     # @return self
     def append(self, other):
@@ -176,25 +181,68 @@ class Obj2Vec:
         self.embedding.columns = list(columns)
         return self
 
+    # Adds new objects in the embedding. Note that the new vectors will be bogus
+    # until the embedding is re-trained. Useful for extending off-the-shelf
+    # with custom vocabularies.
+    # @param vocabulary: set of objects to add or modify
+    # @return self
+    def extend(self, vocabulary: set):
+
+        # don't overwrite existing or unknown vector terms
+        new_terms = vocabulary - set(self.embedding.index)
+        n = len(new_terms)
+        if n > 0:
+            dim = self._dimensionality()
+
+            # generate matrix of tiny random embedding weights (objs x dims)
+            # needed to avoid vanishing gradients in further trainings.
+            # ensure each of the new obj vector is unique via incremental index
+            # on the 1st dimension.
+            df = pd.DataFrame(
+                np.c_[
+                    np.arange(0, 1, step=1 / n) / 10,      # incremental index.
+                    (np.random.rand(n, dim - 1) - 1) / 10  # rnd rest between ~(-0.1, +0.1)
+                ],
+                dtype=self.resolution,
+                index=new_terms
+            )
+            self.embedding = pd.concat([self.embedding, df], axis=0)
+
+        return self
+
     # Shrinks rows & columns of an embedding as a way to reduce the memory
     # footprint & noise. Note however that this transformation is irreversible
     # & may affect embedding quality.
-    #
-    # @return vocabulary    optional subset of objects to keep.
-    # @return dim_variance  optional fraction or number of dimensions to keep.
+    # @return vocabulary: optional subset of objects to keep.
+    # @return embed_dim:  optional fraction or number of dimensions to keep.
     # @return self
-    def compact(self, vocabulary: list = None, dim_variance: float = None):
-        if bool(vocabulary):
+    def compact(self, vocabulary: set = None, embed_dim=None):
+        if vocabulary:
+            unk_vtr_name = self._unknown_vtr().name
+            require(
+                unk_vtr_name not in vocabulary,
+                f"cannot remove the unknown vector: '{unk_vtr_name}'"
+            )
+
+            # Identify terms to remove (include unknown vector)
+            removable_terms = set(self.embedding.index) - vocabulary
+
+            # update unknown vector with average of removable terms.
+            # Note, this is biased & lossy on repeats
+            self.embedding.loc[unk_vtr_name] = self.embedding[
+                self.embedding.index.isin(removable_terms)
+            ].mean()
+
+            # Remove unwanted vocabulary but keep unknown vector.
             self.embedding = self.embedding.drop(
-                set(self.embedding.index) - set(vocabulary),
+                removable_terms - {unk_vtr_name},
                 errors='ignore'
             )
 
-        if bool(dim_variance):
-            require(dim_variance > 0,
-                    "positive fraction or number of dimensions to reduce to")
+        if embed_dim:
+            require(embed_dim > 0, "positive fraction or number of dimensions needed")
             self.embedding = self._update_embedding(
-                PCA(n_components=dim_variance).fit_transform(self.embedding)
+                PCA(n_components=embed_dim).fit_transform(self.embedding)
             )
 
         return self
@@ -204,69 +252,66 @@ class Obj2Vec:
         self.embedding.to_csv(
             filename,
             sep='\t',
-            compression='gzip',
+            compression=self.compression_format,
             index=True,
+            header=False,
         )
+
+        if os.path.exists(self.checkpoint_file):
+            os.remove(self.checkpoint_file)
+
         return self
 
     # USAGE METHODS #
 
-    # Looks up an embedding vector for the object. Out of vocabulary objects
+    # Looks up an embedding vector for the object. Out-of-vocabulary objects
     # produce a unique & deterministic random permutation of the UNKNOWN vector.
-    #
-    # @param obj:   object key.
+    # @param obj:   object key
     # @return vtr
-    def vectorize(self, obj: str) -> pd.Series:
+    @cached(cache=LRUCache(maxsize=128))
+    def vectorize(self, obj: str = None) -> pd.Series:
         require(not self.embedding.empty, "this embedding needs learning")
 
-        if obj in self.embedding.index:
+        if self.has_vocab(obj):
             vtr = pd.Series.copy(self.embedding.loc[obj], deep=True)
+        elif obj is None:
+            vtr = pd.Series.copy(self._unknown_vtr())
         else:
-            num = int(hashlib.md5(str(obj).encode('utf-8')).hexdigest(), 16)
-            idx = str(num % self._dimensionality())
+            unk_id = int(hashlib.md5(str(obj).encode('utf-8')).hexdigest(), 16)
+            col_idx = unk_id % self._dimensionality()
 
-            random.seed(num)
+            random.seed(unk_id)
             vtr = pd.Series.copy(self._unknown_vtr(), deep=True).rename(obj)
             unique = False
             while not unique:
-                vtr.at[idx] = random.uniform(-1, 1)
+                vtr.at[col_idx] = random.uniform(-1, 1)
                 unique = not self._exists_mask(vtr).any()
         return vtr
 
-    # Inverse of vectorize to find the closes object from a possibly non
+    # Inverse of vectorize to find the closest object from a possibly non
     # existing vector.
-    #
-    # @param vtr:   vector.
-    # @return obj:
+    # @param vtr:   vector to identify, its name might be bogus.
+    # @return obj
+    @cached(cache=LRUCache(maxsize=64), key=custom_keyable_args)
     def objectify(self, vtr: pd.Series) -> str:
         require(not self.embedding.empty, "must first load an embedding")
 
-        keep = self._exists_mask(vtr)
-        if self.embedding[keep].shape[0] == 1:
-            result = self.embedding[keep].index
+        hits = self.embedding[self._exists_mask(vtr)]
+        if hits.shape[0] == 1:
+            result = hits.index
         else:
             result = self.rank(vtr, n=1)
         return result[0]
 
-    # Compares cosine similarity between vectors.
-    #
-    # @param obj1:  one object.
-    # @param obj2:  another object.
-    # @return sim:  1 = synonyms, 0 = irrelevant, -1 = antonyms
-    def similarity(self, obj1: str, obj2: str) -> float:
-        vtr1 = self.vectorize(obj1).to_numpy()
-        vtr2 = self.vectorize(obj2).to_numpy()
-        return np.dot(vtr1, vtr2)/(np.linalg.norm(vtr1) * np.linalg.norm(vtr2))
-
     # Finds top most similar vectors listed in descending relevance order.
-    #
-    # @param objvtr:    object key or vector.
-    # @param n:         number of results to retrieve.
-    # @return           list of nearest objects.
+    # @param objvtr: object key or vector.
+    # @param n:      number of results to retrieve.
+    # @return list of nearest objects.
+    @cached(cache=LRUCache(maxsize=64), key=custom_keyable_args)
     def rank(self, objvtr, n: int = 10) -> list:
         require(n > 0, "need number of results to fetch")
 
-        if type(objvtr) == pd.Series:
+        if isinstance(objvtr, pd.Series):
             vtr = objvtr
             obj = vtr.name if vtr.name else self._unknown_vtr().name
         else:
@@ -280,8 +325,8 @@ class Obj2Vec:
         ).fit(self.embedding)
         hits = finder.kneighbors(
             [vtr],
-            n_neighbors=n+1,
-            return_distance=False
+            n_neighbors=n + 1,
+            return_distance=False,
         )[0]
 
         # convert indices to objects & filter self.
@@ -298,26 +343,48 @@ class Obj2Vec:
             key=lambda obj_other: self.similarity(obj, obj_other)
         )[:n]
 
+    # Compares cosine similarity between vectors.
+    # @param objvtr1:  one object key or vector.
+    # @param objvtr2:  another object key or vector.
+    # @return sim:     1 = synonyms, 0 = irrelevant, -1 = antonyms
+    @cached(cache=LRUCache(maxsize=64), key=custom_keyable_args)
+    def similarity(self, objvtr1, objvtr2) -> float:
+        objvtr1_strtype = isinstance(objvtr1, str)
+        objvtr2_strtype = isinstance(objvtr2, str)
+
+        if objvtr1_strtype and objvtr2_strtype and objvtr1 == objvtr2:
+            result = 1.0
+        else:
+            vtr1 = (self.vectorize(objvtr1) if objvtr1_strtype else objvtr1).to_numpy()
+            vtr2 = (self.vectorize(objvtr2) if objvtr2_strtype else objvtr2).to_numpy()
+
+            numerator = np.dot(vtr1, vtr2)
+            denominator = np.linalg.norm(vtr1) * np.linalg.norm(vtr2)
+            result = numerator / denominator if denominator != 0 else 0
+        return result
+
+    # Public helper to check if object is known to the embedding.
+    def has_vocab(self, obj: str) -> bool:
+        return obj in self.embedding.index
+
     # PRIVATE METHODS #
 
     @staticmethod
-    def _build_sgns(vocab_size: int, embed_dim: int,
-                    weights: np.ndarray = None):
-        require(embed_dim < vocab_size,
-                "dimension cannot be larger than vocabulary")
+    def _build_sgns(vocab_size: int, embed_dim: int, weights: np.ndarray = None):
+        require(embed_dim < vocab_size, "dimension cannot be larger than vocabulary")
 
         shape = (1,)
         input_target = Input(shape, name='target_obj')
         input_context = Input(shape, name='context_obj')
 
-        def build_embedding(input: Input, name: str):
+        def build_embedding(input_data: Input, name: str):
             lyr = Embedding(
                 input_dim=vocab_size,
                 output_dim=embed_dim,
                 input_length=1,
                 weights=None if weights is None else [weights],
                 name=f'{name}_embed',
-            )(input)
+            )(input_data)
             lyr = Reshape((embed_dim, 1), name=f'{name}_reshape')(lyr)
             return lyr
 
@@ -335,7 +402,7 @@ class Obj2Vec:
 
     # Splits skip-grams into array of its tuple parts. Reverse maps objects
     # to embedding's vocabulary indices filtering any unknown gram.
-    def _parse_skipgrams(self, skip_grams: list) -> (list, list, list):
+    def _parse_skipgrams(self, skip_grams: list) -> Tuple[list, list, list]:
         targets, contexts, labels = zip(*skip_grams)
         targets = list(targets)
         contexts = list(contexts)
@@ -346,42 +413,94 @@ class Obj2Vec:
 
     # Dataframe mask matching to row of values.
     def _exists_mask(self, vtr: pd.Series):
-        require(vtr.shape == (self._dimensionality(),),
-                "vector needs same dimension as embedding")
+        require(
+            vtr.shape == (self._dimensionality(),),
+            f"vector {vtr.shape} needs same dimensionality as embedding {self._dimensionality()}"
+        )
         keep = 1
         for col in self.embedding.columns:
             keep = keep & (self.embedding[col] == vtr[col])
         return keep
 
-    def _index_of(self, obj: str):
-        if obj in self.embedding.index:
-            return self.embedding.index.get_loc(obj)
-        else:
-            return 0  # unknown
-
-    def _dimensionality(self):
+    # Latent concept size of the embedding.
+    def _dimensionality(self) -> int:
         return self.embedding.shape[1] if not self.embedding.empty else 0
 
-    def _unknown_vtr(self):
-        return self.embedding.iloc[0]
+    # Index of the obj if it exists, else 0 as the unknown vector.
+    def _index_of(self, obj: str) -> int:
+        return \
+            0 if self.has_vocab(obj) else \
+            self.embedding.index.get_loc(obj)
 
     def _update_embedding(self, data):
         df_embed = pd.DataFrame(data)  # idx->vtr
         df_terms = self.embedding \
-            .drop(self.embedding.columns, axis=1).reset_index()  # idx->obj
+            .drop(self.embedding.columns, axis=1).reset_index() \
+            .rename(columns={"index": self.index_col})  # idx->obj
         return df_terms.merge(
             df_embed,
             left_index=True,
             right_index=True,
         ).set_index(self.index_col)  # obj->vtr
 
+    # Symbolic vector for the out-of-vocabulary
+    def _unknown_vtr(self) -> pd.Series:
+        return self.embedding.iloc[0]   # assumed!
+
     # MEMBER VARIABLES #
 
     index_col = 'object'
+    compression_format = 'xz'
+    checkpoint_file = '.obj2vec.h5'
+    resolution = np.float64
 
 
+# UTILITIES #
+    
 # Assert like helper to validate inputs at runtime.
 def require(condition: bool, msg: str = ""):
     if not condition:
         raise ValueError(msg)
     return
+
+def custom_keyable_args(*args, **kwargs) -> tuple:
+    key = tuple()
+
+    for arg in args:
+        try:
+            key += as_immutable(arg)
+        except TypeError:
+            key += hashkey(arg)
+
+    try:
+        key += as_immutable(kwargs)
+    except TypeError:
+        key += hashkey(kwargs)
+
+    return key
+
+# Recursively converts an object into an immutable tuple representation
+def as_immutable(obj) -> tuple:
+    # TODO python object?
+
+    if isinstance(obj, dict):
+        return tuple(
+            (k, as_immutable(v)) for k, v in sorted(obj.items())
+        )
+
+    if isinstance(obj, set):
+        return tuple(
+            as_immutable(v) for v in sorted(obj)
+        )
+
+    if isinstance(obj, list):
+        return tuple(
+            as_immutable(v) for v in obj
+        )
+
+    if isinstance(obj, pd.Series):
+        return (
+            obj.name, as_immutable(obj.to_list())
+        )
+
+    return obj,
